@@ -1,25 +1,27 @@
-# HCS12 Assembly Digital Clock
+# HCS12 Assembly Alarm Clock
 
-An interrupt-driven digital clock implemented in **HCS12 assembly** for the **Dragon12-Light development board** as the final project for **EGEE 250** at Lake Superior State University.
+An interrupt-driven alarm clock implemented in **HCS12 assembly** for the **Dragon12-Light development board** as the final project for **EGEE 250** at Lake Superior State University.
 
-The system maintains real-time hours, minutes, and seconds, accepts user input through a matrix keypad, and displays the current time using both a character LCD and the board's four-digit seven-segment display.
+The system maintains real-time hours, minutes, and seconds, supports a configurable alarm with snooze functionality, accepts user input through a matrix keypad and hardware push buttons, and displays information using both a character LCD and four-digit seven-segment display.
 
 ## Features
 
 - Real-time clock implemented using hardware timer interrupts
-- Hours, minutes, and seconds tracking
-- 12-hour LCD display with AM/PM indication
-- Four-digit seven-segment display for hours and minutes
+- Configurable alarm with enable/disable control
+- 60-second snooze functionality
+- Day-of-week tracking
 - Matrix keypad input
-- User-configurable starting time
-- Input validation and backspace support
-- Binary-to-ASCII and ASCII-to-binary conversion routines
-- Direct register, stack, and memory manipulation in HCS12 assembly
-- LCD and multiplexed seven-segment display integration
+- Interrupt-driven hardware push-button controls
+- Character LCD interface
+- Multiplexed four-digit seven-segment display
+- 12-hour LCD display with AM/PM indication
+- User-configurable current time and alarm time
+- Custom ASCII-to-binary and binary-to-ASCII conversion routines
+- Direct register, stack, memory, and peripheral manipulation in HCS12 assembly
 
 ## System Overview
 
-The application runs on the **MC9S12/Dragon12-Light platform** and combines several on-board peripherals into a single assembly application.
+The project runs on the **MC9S12/Dragon12-Light platform** and integrates several hardware peripherals into a single assembly application.
 
 ```text
               ┌──────────────────┐
@@ -31,34 +33,98 @@ The application runs on the **MC9S12/Dragon12-Light platform** and combines seve
               │      HCS12       │
               │                  │
               │  Clock Logic     │
+              │  Alarm / Snooze  │
               │  ECT Interrupts  │
               │  Input Handling  │
               │  Data Conversion │
-              └───────┬───┬──────┘
-                      │   │
-              ┌───────┘   └───────┐
-              ▼                   ▼
-      ┌───────────────┐   ┌────────────────┐
-      │ Character LCD │   │ 4-Digit 7-Seg  │
-      │  HH:MM:SS     │   │     HH:MM      │
-      │     AM/PM     │   │                │
-      └───────────────┘   └────────────────┘
+              └────┬────────┬────┘
+                   │        │
+           ┌───────┘        └────────┐
+           ▼                         ▼
+   ┌───────────────┐         ┌────────────────┐
+   │ Character LCD │         │ 4-Digit 7-Seg  │
+   │  HH:MM:SS     │         │     HH:MM      │
+   │ AM/PM + Day   │         │                │
+   └───────────────┘         └────────────────┘
+                   ▲
+                   │
+          ┌────────┴─────────┐
+          │ Hardware Buttons │
+          │ Alarm Controls   │
+          └──────────────────┘
 ```
 
 ## Interrupt-Driven Timekeeping
 
 Clock timing is handled using the **Enhanced Capture Timer (ECT)** and output-compare channel 7.
 
-The timer generates periodic interrupts that are counted to produce one-second intervals. Once one second has elapsed, the interrupt service routine:
+A periodic timer interrupt is counted to produce one-second intervals. Each second, the interrupt service routine handles several system tasks:
 
-1. Increments the current time.
-2. Handles seconds, minutes, and hour rollover.
-3. Updates the four-digit seven-segment display.
-4. Updates the character LCD.
+1. Increment the current time.
+2. Handle seconds, minutes, hours, and day rollover.
+3. Check whether the current time matches the configured alarm.
+4. Update the snooze countdown when active.
+5. Trigger the alarm when necessary.
+6. Update the seven-segment display.
+7. Toggle the seven-segment display's colon.
+8. Update the LCD when appropriate.
 
-This allows timekeeping to operate independently of the program's main input loop.
+This allows the clock and alarm logic to continue operating independently of the main keypad-input loop.
 
-## Time Handling
+## Alarm and Snooze System
+
+The user can configure an alarm time using the matrix keypad and independently enable or disable the alarm.
+
+When alarms are enabled, the system compares the current hours, minutes, and seconds against the stored alarm time once per second. When all three values match, the alarm state is activated and the LCD changes to an alarm screen.
+
+The alarm can then be either dismissed or snoozed.
+
+Snoozing starts a **60-second countdown**. Once the countdown expires, the alarm is triggered again as long as alarms remain enabled.
+
+A compact flag register is used to track several alarm-related system states, including:
+
+- Alarm-time display mode
+- Alarm enabled/disabled
+- Alarm active
+- Snooze active
+
+## User Input
+
+### Matrix Keypad
+
+A matrix keypad connected through **PORTA** provides the primary user interface.
+
+The keypad scanning routine drives individual columns, detects the active row, and converts the resulting row/column position into its corresponding character.
+
+The keypad is used to:
+
+- Enter the current time
+- Enter the alarm time
+- Correct input using backspace
+- Display the configured alarm time
+- Snooze an active alarm
+- Dismiss an active alarm
+- Enable or disable the alarm
+
+Time values are entered as six digits:
+
+```text
+HHMMSS
+```
+
+### Hardware Push Buttons
+
+Three hardware push buttons connected through **Port H** provide additional alarm controls.
+
+Button presses are handled using a dedicated interrupt service routine rather than polling. Depending on the button pressed, the user can:
+
+- Snooze an active alarm
+- Dismiss an active alarm
+- Toggle alarm enable/disable
+
+This provides a second physical interface for controlling the alarm independently of the keypad.
+
+## Time and Day Handling
 
 The clock internally stores hours, minutes, and seconds as separate binary values.
 
@@ -67,37 +133,20 @@ Time rollover is handled directly in assembly:
 ```text
 60 seconds → increment minute
 60 minutes → increment hour
-24 hours   → return to 00:00:00
+24 hours   → return to 00:00:00 and advance day
 ```
 
-The LCD converts the internally stored 24-hour time into a **12-hour representation with AM/PM indication**, including handling midnight and noon transitions.
+The current day of the week is also tracked. The user selects the initial day when configuring the clock, and the day automatically advances when the clock passes midnight.
 
-## Keypad Interface
-
-A matrix keypad connected through **PORTA** provides user input.
-
-The keypad scanning routine:
-
-- Drives individual keypad columns.
-- Reads the active row.
-- Determines the selected key.
-- Converts the row/column position into its corresponding character.
-
-The user can enter a six-digit time in the form:
-
-```text
-HHMMSS
-```
-
-Input is displayed on the LCD as it is entered, and a backspace function allows the user to correct entries before the time is stored.
+The LCD converts the internally stored 24-hour time into a **12-hour representation with AM/PM indication**.
 
 ## Data Conversion
 
-Because the clock stores time numerically but receives and displays ASCII characters, the project implements custom conversion routines in assembly.
+Because keypad input and LCD output use ASCII characters while time values are stored numerically, the project implements custom conversion routines directly in assembly.
 
 ### ASCII to Binary
 
-Pairs of ASCII digits are converted into numeric values for hours, minutes, and seconds.
+Pairs of ASCII characters entered by the user are converted into binary values for hours, minutes, and seconds.
 
 ```text
 "12" → 12
@@ -107,7 +156,7 @@ Pairs of ASCII digits are converted into numeric values for hours, minutes, and 
 
 ### Binary to ASCII
 
-Binary time values are converted back into ASCII characters before being placed into the LCD output string.
+Binary time values are converted back into ASCII characters before being inserted into the LCD output strings.
 
 These routines perform the required arithmetic directly using HCS12 registers and instructions.
 
@@ -115,50 +164,77 @@ These routines perform the required arithmetic directly using HCS12 registers an
 
 ### Character LCD
 
-The LCD displays the complete time in a human-readable format:
+The character LCD serves as the primary user interface.
 
-```text
-  Current Time
-  12:34:56 PM
-```
+During normal operation it displays the current time, AM/PM state, and current day. It is also used to:
 
-The LCD is also used as the interface for entering time values through the keypad.
+- Prompt for the current time
+- Prompt for the alarm time
+- Display the configured alarm time
+- Display the active alarm screen
 
 ### Seven-Segment Display
 
-The Dragon12-Light's four-digit seven-segment display shows the current **hours and minutes**.
+The Dragon12-Light's four-digit seven-segment display continuously shows the current **hours and minutes**.
 
 ```text
 12:34
 ```
 
-The display is multiplexed using a Real-Time Interrupt (RTI) routine contained in the provided LED display driver.
+The colon is toggled periodically by the clock logic to provide a visible indication that the clock is running.
+
+The display itself is multiplexed using a Real-Time Interrupt (RTI) routine contained in the provided LED display driver.
+
+## Software Structure
+
+The main application is divided into assembly subroutines responsible for individual pieces of the system.
+
+Important routines include:
+
+| Routine | Purpose |
+| --- | --- |
+| `ECT_INIT` | Configures the output-compare timer interrupt |
+| `OC7_ISR` | Handles once-per-second clock, alarm, snooze, and display updates |
+| `PTH_INIT` | Configures Port H push-button interrupts |
+| `button_press` | Handles interrupt-driven alarm controls |
+| `INPUT_CURR_TIME` | Accepts and initializes the current time |
+| `INC_TIME` | Updates time and handles rollovers |
+| `ALARM` | Compares current and alarm times |
+| `GETKEY` | Scans the matrix keypad |
+| `P_USER` | Accepts time input from the keypad |
+| `V_TIME` | Normalizes entered time values |
+| `ascii_to_bin` | Converts ASCII input into numeric values |
+| `bin_to_ascii` | Converts numeric values for LCD output |
+| `UPDATE_7_SEGs` | Updates seven-segment display values |
+| `TOGGLE_A` | Enables or disables the alarm |
+| `GET_DAY` / `UPDATE_DAY` | Initializes and advances the day of the week |
 
 ## Repository Structure
 
 ```text
-Assembly_Digital_Clock/
+HCS12_Alarm_Clock/
 │
 ├── README.md
 │
 ├── src/
-│   └── digital_clock.asm
+│   └── alarm_clock.asm
 │
 └── provided/
     ├── LCD_Driver.asm
     └── LED_Display.asm
 ```
 
-### `src/digital_clock.asm`
+### `src/alarm_clock.asm`
 
-Main project source code containing the student-developed application logic, including:
+Contains the student-developed application logic, including:
 
 - Program initialization
-- ECT configuration
-- Output-compare interrupt service routine
-- Clock and rollover logic
-- Keypad scanning
-- User input handling
+- Timer configuration
+- Interrupt service routines
+- Clock and day tracking
+- Alarm and snooze state management
+- Keypad scanning and input handling
+- Hardware push-button controls
 - LCD output formatting
 - Seven-segment display updates
 - ASCII/binary conversion routines
@@ -167,7 +243,7 @@ Main project source code containing the student-developed application logic, inc
 
 Contains display support code supplied for use in EGEE 250.
 
-These files are retained with their original attribution and are separated from the student-developed application code for clarity.
+These files are retained with their original attribution and separated from the student-developed application code to clearly distinguish provided support code from the project implementation.
 
 ## Technologies & Concepts
 
@@ -177,13 +253,16 @@ These files are retained with their original attribution and are separated from 
 - Enhanced Capture Timer (ECT)
 - Output Compare Interrupts
 - Real-Time Interrupts (RTI)
+- GPIO / Port Interrupts
 - Matrix Keypad Scanning
 - Character LCD
 - Multiplexed Seven-Segment Displays
 - Memory-Mapped I/O
 - Register-Level Programming
+- Interrupt Service Routines
 - Stack Operations
 - Assembly Subroutines
+- State and Flag Management
 
 ## Course Context
 
